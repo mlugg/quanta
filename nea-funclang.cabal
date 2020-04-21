@@ -19,7 +19,7 @@ extra-source-files:  CHANGELOG.md
 
 executable nea-funclang
   main-is:             Main.hs
-  -- other-modules:
+  other-modules:       Parser
   -- other-extensions:
   build-depends:       base >=4.12 && <4.13, mtl, parsec, indents
   hs-source-dirs:      src
