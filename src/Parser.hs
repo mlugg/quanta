@@ -7,7 +7,13 @@ import qualified Text.Megaparsec.Char.Lexer as L
 import Control.Monad.Combinators.Expr
 import Data.Void
 
+-- AST types {{{
+
 type Identifier = String
+
+data Pattern = PatIdent Identifier
+             | PatApplication Pattern Pattern
+             deriving (Show)
 
 data TopLevel = TLAssign Identifier Expr
               | TLTypeSig Identifier Type
@@ -17,29 +23,24 @@ data Expr = ExprIdent Identifier
           | ExprApplication Expr Expr
           | ExprNatLit Integer
           | ExprLambda Identifier Expr
+          | ExprLet [LetBinding] Expr
+          | ExprCase Expr [(Pattern, Expr)]
           deriving (Show)
-          -- TODO: case / let
+
+data LetBinding = LetAssign Identifier Expr
+                | LetTypeSig Identifier Type
+                deriving (Show)
 
 data Type = TypeIdent Identifier
           | TypeApplication Type Type
           | TypeFunction Type Type
           deriving (Show)
 
---langDef =
---  T.LanguageDef { T.commentStart    = "{-"
---                , T.commentEnd      = "-}"
---                , T.commentLine     = "--"
---                , T.nestedComments  = True
---                , T.identStart      = letter <|> char '_'
---                , T.identLetter     = alphaNum <|> oneOf "_'"
---                , T.opStart         = T.opLetter langDef
---                , T.opLetter        = oneOf "!#$%&*+./<=>?@\\^|-~;:"
---                , T.reservedNames   = [ "let", "in", "case", "of" ]
---                , T.reservedOpNames = [ "=", "::", "->", "\\" ]
---                , T.caseSensitive   = True
---                }
+-- }}}
 
 type Parser = Parsec Void String
+
+-- Utility parsers {{{
 
 lineComment :: Parser ()
 lineComment  = L.skipLineComment  "--"
@@ -74,24 +75,31 @@ semi = symbol ";"
 parens :: Parser a -> Parser a
 parens = between (symbol "(") (symbol ")")
 
+braces :: Parser a -> Parser a
+braces = between (symbol "{") (symbol "}")
+
 operator :: Parser String
-operator = do x <- some opChar
-              sc
-              if x `elem` reservedOps
-              then fail ("reserved operator " ++ show x ++ " cannot be used here")
-              else return x
+operator = try $ do x <- some opChar
+                    sc
+                    if x `elem` reservedOps
+                    then fail ("reserved operator " ++ show x ++ " cannot be used here")
+                    else return x
 
 identifier :: Parser String
-identifier = do x <- identStart
-                xs <- many identChar
-                sc
-                let s = x:xs
-                if s `elem` reservedNames
-                then fail ("keyword " ++ show s ++ " cannot be identifier")
-                else return s
+identifier = try $ do x <- identStart
+                      xs <- many identChar
+                      sc
+                      let s = x:xs
+                      if s `elem` reservedNames
+                      then fail ("keyword " ++ show s ++ " cannot be identifier")
+                      else return s
 
 natural :: Parser Integer
 natural = L.decimal <* sc
+
+-- }}}
+
+-- Top-level parsers {{{
 
 fileParser :: Parser [TopLevel]
 fileParser = sc *> topLevelDef `endBy` semi <* eof
@@ -105,26 +113,63 @@ assignment = TLAssign <$> identifier <*> (reservedOp "=" *> expr)
 typeSig :: Parser TopLevel
 typeSig = TLTypeSig <$> identifier <*> (reservedOp "::" *> typeExpr)
 
+-- }}}
+
+-- Expression parsers {{{
+
 expr :: Parser Expr
 expr = makeExprParser term
   [ [ InfixL (pure ExprApplication)] ]
-
-typeExpr :: Parser Type
-typeExpr = makeExprParser typeTerm
-  [ [ InfixL (pure TypeApplication) ]
-  , [ InfixR (TypeFunction <$ reservedOp "->") ] ]
  
 term :: Parser Expr
 term = parens expr
    <|> ExprNatLit <$> natural
    <|> ExprIdent  <$> identifier
    <|> lambda
+   <|> caseExpr
+   <|> letExpr
 
 lambda :: Parser Expr
 lambda = ExprLambda
      <$> (reservedOp "\\" *> identifier)
      <*> (reservedOp "->" *> expr)
 
+caseExpr :: Parser Expr
+caseExpr = ExprCase
+       <$> (reserved "case" *> expr)
+       <*> (reserved "of"   *> braces (caseBranch `sepEndBy` semi))
+       where caseBranch = (,) <$> pattern <*> (reservedOp "->" *> expr)
+
+letExpr :: Parser Expr
+letExpr = ExprLet
+      <$> (reserved "let" *> braces (letPart `sepEndBy` semi))
+      <*> (reserved "in"  *> expr)
+      where letPart = try letAssign <|> letTypeSig
+            letAssign = LetAssign <$> identifier <*> (reservedOp "=" *> expr)
+            letTypeSig = LetTypeSig <$> identifier <*> (reservedOp "::" *> typeExpr)
+-- }}}
+
+-- Type parsers {{{
+
+typeExpr :: Parser Type
+typeExpr = makeExprParser typeTerm
+  [ [ InfixL (pure TypeApplication) ]
+  , [ InfixR (TypeFunction <$ reservedOp "->") ] ]
+
 typeTerm :: Parser Type
-typeTerm = parens (typeExpr)
+typeTerm = parens typeExpr
        <|> TypeIdent <$> identifier
+
+-- }}}
+
+-- Pattern parsers {{{
+
+pattern :: Parser Pattern
+pattern = makeExprParser patternTerm
+  [ [ InfixL (pure PatApplication) ] ]
+
+patternTerm :: Parser Pattern
+patternTerm = parens pattern
+          <|> PatIdent <$> identifier
+
+-- }}}
