@@ -1,9 +1,11 @@
 module Parser where
 
-import Text.Parsec
-import Text.Parsec.Indent
-import Text.Parsec.Expr
-import qualified Text.Parsec.Token as T
+import Data.Functor
+import Text.Megaparsec
+import Text.Megaparsec.Char
+import qualified Text.Megaparsec.Char.Lexer as L
+import Control.Monad.Combinators.Expr
+import Data.Void
 
 type Identifier = String
 
@@ -23,81 +25,103 @@ data Type = TypeIdent Identifier
           | TypeFunction Type Type
           deriving (Show)
 
-langDef =
-  T.LanguageDef { T.commentStart    = "{-"
-                , T.commentEnd      = "-}"
-                , T.commentLine     = "--"
-                , T.nestedComments  = True
-                , T.identStart      = letter <|> char '_'
-                , T.identLetter     = alphaNum <|> oneOf "_'"
-                , T.opStart         = T.opLetter langDef
-                , T.opLetter        = oneOf "!#$%&*+./<=>?@\\^|-~;:"
-                , T.reservedNames   = [ "let", "in", "case", "of" ]
-                , T.reservedOpNames = [ "=", "::", "->", "\\" ]
-                , T.caseSensitive   = True
-                }
+--langDef =
+--  T.LanguageDef { T.commentStart    = "{-"
+--                , T.commentEnd      = "-}"
+--                , T.commentLine     = "--"
+--                , T.nestedComments  = True
+--                , T.identStart      = letter <|> char '_'
+--                , T.identLetter     = alphaNum <|> oneOf "_'"
+--                , T.opStart         = T.opLetter langDef
+--                , T.opLetter        = oneOf "!#$%&*+./<=>?@\\^|-~;:"
+--                , T.reservedNames   = [ "let", "in", "case", "of" ]
+--                , T.reservedOpNames = [ "=", "::", "->", "\\" ]
+--                , T.caseSensitive   = True
+--                }
 
-lexer = T.makeTokenParser langDef
+type Parser = Parsec Void String
 
-identifier = T.identifier lexer
-reserved   = T.reserved   lexer
-operator   = T.operator   lexer
-reservedOp = T.reservedOp lexer
-natural    = T.natural    lexer
-whiteSpace = T.whiteSpace lexer
-parens     = T.parens     lexer
+lineComment :: Parser ()
+lineComment  = L.skipLineComment  "--"
+blockComment :: Parser ()
+blockComment = L.skipBlockComment "{-" "-}"
 
-type EMCParser a = IndentParser String () a
+sc :: Parser ()
+sc  = L.space (void $ some $ oneOf " \t")   lineComment blockComment
+scn :: Parser ()
+scn = L.space (void $ some $ oneOf " \t\n") lineComment blockComment
 
-parseFile :: String -> IO (Either ParseError [TopLevel])
-parseFile f = doParse <$> readFile f
+identStart :: Parser Char
+identStart = letterChar <|> char '_'
+identChar :: Parser Char
+identChar = alphaNumChar <|> oneOf "_'"
+opChar :: Parser Char
+opChar = oneOf "!#$%&*+./<=>?@\\^|-~;:"
 
-doParse :: String -> Either ParseError [TopLevel]
-doParse = runIndentParser fileParser () "<no name>"
+reservedNames = [ "let", "in", "case", "of" ]
+reservedOps   = [ "=", "::", "->", "\\" ]
 
-fileParser :: EMCParser [TopLevel]
-fileParser = whiteSpace *> many (topLevel *> topLevelDef) <* eof
+reserved :: Parser () -> String -> Parser String
+reserved sc' x = string x <* notFollowedBy identChar <* sc'
 
-topLevelDef :: EMCParser TopLevel
-topLevelDef = try assignment <|> try typeSig
+reservedOp :: Parser () -> String -> Parser String
+reservedOp sc' x = string x <* notFollowedBy opChar <* sc'
 
-assignment :: EMCParser TopLevel
-assignment = withPos $
-  (TLAssign <$> identifier) <+/> (reservedOp "=" *> expr)
+operator :: Parser () -> Parser String
+operator sc' = do x <- some opChar
+                  sc'
+                  if x `elem` reservedOps
+                  then fail ("reserved operator " ++ show x ++ " cannot be used here")
+                  else return x
 
-typeSig :: EMCParser TopLevel
-typeSig = withPos $
-  (TLTypeSig <$> identifier) <+/> (reservedOp "::" *> typeExpr)
+identifier :: Parser () -> Parser String
+identifier sc' = do x <- identStart
+                    xs <- many identChar
+                    sc'
+                    let s = x:xs
+                    if s `elem` reservedNames
+                    then fail ("keyword " ++ show s ++ " cannot be identifier")
+                    else return s
 
-expr :: EMCParser Expr
-expr = buildExpressionParser opTable term
+natural :: Parser () -> Parser Integer
+natural sc' = L.decimal <* sc'
 
-opTable = [ [ Infix (pure ExprApplication) AssocLeft ] ]
+fileParser :: Parser [TopLevel]
+fileParser = many topLevelDef <* eof
 
-term :: EMCParser Expr
-term = sameOrIndented *>
-  (
-        parens expr
-    <|> ExprNatLit <$> natural
-    <|> ExprIdent  <$> identifier
-    <|> lambda
-  )
+topLevelDef :: Parser TopLevel
+topLevelDef = L.nonIndented scn $ try assignment <|> typeSig
 
-lambda :: EMCParser Expr
-lambda = ExprLambda
-     <$> (reservedOp "\\" *> identifier)
-     <*> (reservedOp "->" *> expr)
+assignment :: Parser TopLevel
+assignment = L.lineFold scn $ \sc' -> TLAssign <$> identifier sc' <*> (reservedOp sc' "=" *> expr sc')
 
-typeExpr :: EMCParser Type
-typeExpr = buildExpressionParser typeOpTable typeTerm
+typeSig :: Parser TopLevel
+typeSig = L.lineFold scn $ \sc' -> TLTypeSig <$> identifier sc' <*> (reservedOp sc' "::" *> typeExpr sc')
 
-typeOpTable =
-  [ [ Infix (pure TypeApplication) AssocLeft ]
-  , [ Infix (TypeFunction <$ reservedOp "->") AssocRight ] ]
+expr :: Parser () -> Parser Expr
+expr sc' = makeExprParser (term sc')
+  [ [ InfixL (ExprApplication <$ sc') ] ]
 
-typeTerm :: EMCParser Type
-typeTerm = sameOrIndented *>
-  (
-        parens typeExpr
-    <|> TypeIdent <$> identifier
-  )
+typeExpr :: Parser () -> Parser Type
+typeExpr sc' = makeExprParser (typeTerm sc')
+  [ [ InfixL (TypeApplication <$ sc') ]
+  , [ InfixR (TypeFunction <$ reservedOp sc' "->") ] ]
+ 
+term :: Parser () -> Parser Expr
+term sc' = parens (expr sc')
+       <|> ExprNatLit <$> natural sc'
+       <|> ExprIdent  <$> identifier sc'
+       <|> lambda sc'
+  where parens = between (symbol "(") (symbol ")")
+        symbol = L.symbol sc'
+
+lambda :: Parser () -> Parser Expr
+lambda sc' = ExprLambda
+         <$> (reservedOp sc' "\\" *> identifier sc')
+         <*> (reservedOp sc' "->" *> expr sc')
+
+typeTerm :: Parser () -> Parser Type
+typeTerm sc' = parens (typeExpr sc')
+           <|> TypeIdent <$> identifier sc'
+  where parens = between (symbol "(") (symbol ")")
+        symbol = L.symbol sc'
