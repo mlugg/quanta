@@ -3,7 +3,7 @@ cabal-version:       >=1.10
 -- init'.  For further documentation, see
 -- http://haskell.org/cabal/users-guide/
 
-name:                nea-funclang
+name:                quanta
 version:             0.1.0.0
 -- synopsis:
 -- description:
@@ -17,7 +17,7 @@ maintainer:          mlugg@mlugg.co.uk
 build-type:          Simple
 extra-source-files:  CHANGELOG.md
 
-executable nea-funclang
+executable quanta
   main-is:             Main.hs
   other-modules:       Parser
   -- other-extensions:

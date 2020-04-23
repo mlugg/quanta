@@ -101,8 +101,8 @@ natural = L.decimal <* sc
 
 -- Top-level parsers {{{
 
-fileParser :: Parser [TopLevel]
-fileParser = sc *> topLevelDef `endBy` semi <* eof
+quantaFile :: Parser [TopLevel]
+quantaFile = sc *> topLevelDef `endBy` semi <* eof
 
 topLevelDef :: Parser TopLevel
 topLevelDef = try assignment <|> typeSig
