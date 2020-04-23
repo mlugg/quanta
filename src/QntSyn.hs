@@ -26,7 +26,6 @@ data LetBinding = LetAssign Identifier Expr
 
 data Type = TypeIdent Identifier
           | TypeApplication Type Type
-          | TypeFunction Type Type
           deriving (Show)
 
 -- }}}
