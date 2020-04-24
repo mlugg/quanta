@@ -122,12 +122,12 @@ letExpr = ExprLet
 
 -- Type parsers {{{
 
-typeOp op = TypeApplication . TypeApplication (TypeIdent op) <$ reservedOp op
+parseTypeOp op = typeOp op <$ reservedOp op
 
 typeExpr :: Parser Type
 typeExpr = makeExprParser typeTerm
   [ [ InfixL (pure TypeApplication) ]
-  , [ InfixR (typeOp "->") ] ]
+  , [ InfixR (parseTypeOp "->") ] ]
 
 typeTerm :: Parser Type
 typeTerm = parens typeExpr

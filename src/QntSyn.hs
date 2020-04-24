@@ -29,3 +29,5 @@ data Type = TypeIdent Identifier
           deriving (Show)
 
 -- }}}
+
+typeOp op = TypeApplication . TypeApplication (TypeIdent op)
