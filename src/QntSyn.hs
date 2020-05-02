@@ -24,10 +24,11 @@ data LetBinding = LetAssign Identifier Expr
                 | LetTypeSig Identifier Type
                 deriving (Show)
 
-data Type = TypeIdent Identifier
+data Type = TypeUnification Int
+          | TypeConcrete Identifier
           | TypeApplication Type Type
           deriving (Show)
 
 -- }}}
 
-typeOp op = TypeApplication . TypeApplication (TypeIdent op)
+typeOp op = TypeApplication . TypeApplication (TypeConcrete op)

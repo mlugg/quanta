@@ -131,7 +131,7 @@ typeExpr = makeExprParser typeTerm
 
 typeTerm :: Parser Type
 typeTerm = parens typeExpr
-       <|> TypeIdent <$> identifier
+       <|> TypeConcrete <$> identifier
 
 -- }}}
 
