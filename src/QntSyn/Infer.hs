@@ -65,3 +65,67 @@ infer e =
 
     -- TODO
     ExprCase x ys -> undefined
+
+
+
+type Substitution = M.Map Int Type
+
+
+solve :: [Constraint] -> Substitution -> Substitution
+solve [] m = m
+solve xs m =
+  let solns = (\(Equality a b) -> unify a b) <$> xs
+      idxSolns = zip [0..] solns
+  in case filter (isJust . snd) idxSolns of
+    (i,Just x):_ ->
+        let m' = merge m x
+            xs' = fmap (subConstraint x) $ take i xs ++ drop (i+1) xs
+        in solve xs' m'
+    _ -> error "couldn't solve :("
+
+subConstraint :: Substitution -> Constraint -> Constraint
+subConstraint subs (Equality t0 t1) = Equality (substitute subs t0) (substitute subs t1)
+
+unify :: Type -> Type -> Maybe Substitution
+
+unify (TypeConcrete a) (TypeConcrete b)
+    | a == b = Just (M.empty)
+    | otherwise = Nothing
+
+unify (TypeUnification a) (TypeUnification b)
+    | a == b = Just $ M.empty
+    | otherwise = Just $ M.singleton a (TypeUnification b)
+
+unify other (TypeUnification a) = unify (TypeUnification a) other
+
+unify (TypeUnification a) other
+    | contains a other = error "Cannot solve infinite type"
+    | otherwise = Just $ M.singleton a other
+
+unify (TypeApplication a b) (TypeApplication a' b') = 
+    unify a a' >>= \subs0 ->
+    unify b b' >>= \subs1 ->
+    Just $ merge subs0 subs1
+
+unify _ _ = Nothing
+
+substitute :: Substitution -> Type -> Type
+
+substitute subs (TypeUnification i)
+    | M.member i subs = subs M.! i
+    | otherwise = TypeUnification i
+
+substitute subs (TypeApplication a b) = 
+    TypeApplication (substitute subs a) (substitute subs b)
+    
+substitute sub x = x
+
+
+contains :: Int -> Type -> Bool
+contains i (TypeApplication a b) = contains i a || contains i b
+contains i (TypeUnification i') = i == i'
+contains _ _ = False
+
+
+merge :: Substitution -> Substitution -> Substitution
+merge a b = M.union (M.map (substitute a) b) a
