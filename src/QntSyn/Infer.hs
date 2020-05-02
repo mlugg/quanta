@@ -1,7 +1,10 @@
 module QntSyn.Infer where
 
+import Data.Functor
 import Control.Monad.RWS.Lazy
 import Control.Monad.Except
+import Control.Monad.State
+import Control.Monad.Writer
 import qualified Data.Map as M
 import Data.Maybe
 import QntSyn
@@ -14,6 +17,8 @@ data TypeError = UnknownIdentError Identifier
 -- later solved.
 data Constraint = Equality Type Type
   deriving (Show)
+
+-- Constaint generation {{{
 
 -- |The monad within which constraint generation runs. This is an RWS
 -- (reader/writer/state) monad, with a read-only typing environment; a
@@ -80,64 +85,86 @@ infer (ExprLet xs y) =
 -- TODO
 infer (ExprCase x ys) = undefined
 
-type Substitution = M.Map Integer Type
+-- }}}
 
+-- Constraint solving {{{
 
-solve :: [Constraint] -> Substitution -> Substitution
-solve [] m = m
-solve xs m =
-  let solns = (\(Equality a b) -> unify a b) <$> xs
-      idxSolns = zip [0..] solns
-  in case filter (isJust . snd) idxSolns of
-    (i,Just x):_ ->
-        let m' = merge m x
-            xs' = fmap (subConstraint x) $ take i xs ++ drop (i+1) xs
-        in solve xs' m'
-    _ -> error "couldn't solve :("
+type Solve a = WriterT Subs (StateT [Constraint] (Except TypeError)) a
 
-subConstraint :: Substitution -> Constraint -> Constraint
-subConstraint subs (Equality t0 t1) = Equality (substitute subs t0) (substitute subs t1)
+newtype Subs = Subs (M.Map Integer Type)
+  deriving (Show)
 
-unify :: Type -> Type -> Maybe Substitution
+instance Semigroup Subs where
+  Subs x <> y'@(Subs y) = Subs $ M.union (M.map (subType y') x) y
 
-unify (TypeConcrete a) (TypeConcrete b)
-    | a == b = Just (M.empty)
-    | otherwise = Nothing
+instance Monoid Subs where
+  mempty = Subs M.empty
 
-unify (TypeUnification a) (TypeUnification b)
-    | a == b = Just $ M.empty
-    | otherwise = Just $ M.singleton a (TypeUnification b)
+-- Utility functions {{{
+subType :: Subs -> Type -> Type
+subType (Subs subs) t@(TypeUnification i) = M.findWithDefault t i subs
+subType subs (TypeApplication x y) = TypeApplication (subType subs x) (subType subs y)
+subType subs t = t
 
-unify other (TypeUnification a) = unify (TypeUnification a) other
+subConstraint :: Subs -> Constraint -> Constraint
+subConstraint s (Equality t0 t1) = Equality (subType s t0) (subType s t1)
 
-unify (TypeUnification a) other
-    | contains a other = error "Cannot solve infinite type"
-    | otherwise = Just $ M.singleton a other
+applySubs :: Subs -> Solve ()
+applySubs s =
+  tell s *>
+  get >>= put . fmap (subConstraint s)
 
-unify (TypeApplication a b) (TypeApplication a' b') = 
-    unify a a' >>= \subs0 ->
-    unify b b' >>= \subs1 ->
-    Just $ merge subs0 subs1
+addConstraint :: Constraint -> Solve ()
+addConstraint c = get >>= put . (c:)
+-- }}}
 
-unify _ _ = Nothing
+-- |The main constraint solving function. Attempts to solve the set of
+-- constraints existing within the monad's state, removing them as it
+-- does so, and writing resulting substiutions out via the monad's
+-- writer.
+solve :: Solve ()
+solve =
+  get >>= \cs ->
+  if null cs
+  then pure ()
+  else (
+    put (tail cs) *>
+    solve' (head cs) >>= \x ->
+    (if x
+     then pure ()
+     else put (tail cs ++ [head cs])) *>
+    solve
+  )
 
-substitute :: Substitution -> Type -> Type
+solve' :: Constraint -> Solve Bool
+solve' (Equality t0 t1) = unify t0 t1
 
-substitute subs (TypeUnification i)
-    | M.member i subs = subs M.! i
-    | otherwise = TypeUnification i
+-- |Attempts to unify the two given types within the constraint solver
+-- monad. Returns whether or not it was successful; if true, then the
+-- associated constraint should be considered solved, and hence removed
+-- from the list.
+unify :: Type -> Type -> Solve Bool
 
-substitute subs (TypeApplication a b) = 
-    TypeApplication (substitute subs a) (substitute subs b)
-    
-substitute sub x = x
+unify (TypeConcrete x) (TypeConcrete y) = pure (x == y)
 
+unify (TypeUnification x) (TypeUnification y)
+  | x == y = pure True
+  | otherwise = applySubs (Subs $ M.singleton x (TypeUnification y)) $> True
 
-contains :: Integer -> Type -> Bool
-contains i (TypeApplication a b) = contains i a || contains i b
-contains i (TypeUnification i') = i == i'
+unify x y@(TypeUnification _) = unify y x
+
+unify (TypeUnification x) y
+  | y `contains` x = error "Cannot solve the infinite type"
+  | otherwise = applySubs (Subs $ M.singleton x y) $> True
+
+unify (TypeApplication x y) (TypeApplication x' y') =
+  addConstraint (Equality x x') *>
+  addConstraint (Equality y y') $>
+  True
+
+contains :: Type -> Integer -> Bool
+contains (TypeApplication a b) i = a `contains` i || b `contains` i
+contains (TypeUnification j) i = i == j
 contains _ _ = False
 
-
-merge :: Substitution -> Substitution -> Substitution
-merge a b = M.union (M.map (substitute a) b) a
+-- }}}
