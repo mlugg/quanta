@@ -24,7 +24,7 @@ type Infer a =
   RWST
     (M.Map Identifier Type)  -- Typing environment
     [Constraint]             -- Generated constraints
-    Int                      -- Number of type vars
+    Integer                  -- Number of type vars
     (Except TypeError)       -- The exception monad for error handling
     a
 
@@ -33,42 +33,54 @@ fresh :: Infer Type
 fresh = get >>= \c -> TypeUnification c <$ put (c+1)
 
 -- |Looks up the given identifier in the typing environment, throwing
--- the given 'TypeError' if it does not exist.
-envLookup :: String -> TypeError -> Infer Type
-envLookup x e = ask >>= maybe (throwError e) pure . M.lookup x
+-- an appropriate 'TypeError' if it does not exist.
+envLookup :: String -> Infer Type
+envLookup x = ask >>= maybe (throwError $ UnknownIdentError x) pure . M.lookup x
 
 -- |The main type inferrence function. Given an expression and initial
 -- environment, returns the type of the expression, as well as
 -- (indirectly, via the 'Infer' monad) a list of constraints to solve.
 infer :: Expr -> Infer Type
-infer e =
-  case e of
-    ExprIdent x -> envLookup x $ UnknownIdentError x
 
-    ExprApplication f x ->
-      infer f >>= \tf ->
-      infer x >>= \tx ->
-      fresh >>= \tr ->
-      tell [Equality tf (typeOp "->" tx tr)] >>
-      return tr
+infer (ExprIdent x) = envLookup x
 
-    ExprNatLit x -> pure $ TypeConcrete "Nat"
+infer (ExprApplication f x) =
+  infer f >>= \tf ->
+  infer x >>= \tx ->
+  fresh >>= \tr ->
+  tell [Equality tf (typeOp "->" tx tr)] *>
+  return tr
 
-    ExprLambda x y ->
-      fresh >>= \tx ->
+infer (ExprNatLit x) = pure $ TypeConcrete "Nat"
+
+infer (ExprLambda x y) =
+  fresh >>= \tx ->
+  local
+    (M.insert x tx)
+    (typeOp "->" tx <$> infer y)
+
+infer (ExprLet xs y) =
+      let -- Generates a fresh type variable for the given binding x and
+          -- adds to to the environment
+          genVar env x = (\t -> M.insert (fst x) t env) <$> fresh
+
+          -- Generates an equality for the env type variable of a binding
+          -- and its inferred type
+          inferLet x =
+            envLookup (fst x) >>= \t0 ->
+            infer (snd x) >>= \t1 ->
+            tell [Equality t0 t1]
+      in
+        ask >>= \env ->
+        foldM genVar env xs >>= \env' ->
         local
-          (M.insert x tx)
-          (typeOp "->" tx <$> infer y)
+          (const env')
+          (inferLet `mapM_` xs *> infer y)
 
-    -- TODO
-    ExprLet xs y -> undefined
+-- TODO
+infer (ExprCase x ys) = undefined
 
-    -- TODO
-    ExprCase x ys -> undefined
-
-
-
-type Substitution = M.Map Int Type
+type Substitution = M.Map Integer Type
 
 
 solve :: [Constraint] -> Substitution -> Substitution
@@ -121,7 +133,7 @@ substitute subs (TypeApplication a b) =
 substitute sub x = x
 
 
-contains :: Int -> Type -> Bool
+contains :: Integer -> Type -> Bool
 contains i (TypeApplication a b) = contains i a || contains i b
 contains i (TypeUnification i') = i == i'
 contains _ _ = False

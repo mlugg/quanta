@@ -113,11 +113,9 @@ caseExpr = ExprCase
 
 letExpr :: Parser Expr
 letExpr = ExprLet
-      <$> (reserved "let" *> braces (letPart `sepEndBy` semi))
+      <$> (reserved "let" *> braces (letVar `sepEndBy` semi))
       <*> (reserved "in"  *> expr)
-      where letPart = try letAssign <|> letTypeSig
-            letAssign = LetAssign <$> identifier <*> (reservedOp "=" *> expr)
-            letTypeSig = LetTypeSig <$> identifier <*> (reservedOp "::" *> typeExpr)
+      where letVar = (,) <$> identifier <*> (reservedOp "=" *> expr)
 -- }}}
 
 -- Type parsers {{{
