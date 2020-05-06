@@ -22,7 +22,7 @@ data Expr = ExprIdent Identifier
           | ExprCase Expr [(Pattern, Expr)]
           deriving (Show)
 
-data Type = TypeUnification Integer
+data Type = TypeVariable Integer
           | TypeConcrete Identifier
           | TypeApplication Type Type
           deriving (Show)

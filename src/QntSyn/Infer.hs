@@ -36,14 +36,14 @@ type Infer a =
 
 -- |Generates a new unification variable.
 fresh :: Infer Type
-fresh = get >>= \c -> TypeUnification c <$ put (c+1)
+fresh = get >>= \c -> TypeVariable c <$ put (c+1)
 
 -- |Instantiates a TyScheme with fresh unification variables and return
 -- the resulting Type.
 instantiate :: TyScheme -> Infer Type
 instantiate (TyScheme vs t) = foldM f t vs
   where f t' v' = fresh <&> \tv -> replace v' tv t'
-        replace i tn t'@(TypeUnification j)
+        replace i tn t'@(TypeVariable j)
           | i == j = tn
           | otherwise = t'
         replace i tn (TypeApplication t1 t2) = TypeApplication (replace i tn t1) (replace i tn t2)
@@ -56,10 +56,11 @@ envLookup x = ask >>= maybe (throwError $ UnknownIdentError x) pure . M.lookup x
 
 -- |Given a type, attempts to generalise it to a TyScheme by identifying
 -- all type variables not in the given set.
+generalise :: Type -> S.Set Integer -> TyScheme
 generalise t vs = TyScheme (findVars t vs) t
   where
-    findVars (TypeUnification i) vs
-      | i `elem` vs = S.empty
+    findVars (TypeVariable i) vs
+      | i `S.member` vs = S.empty
       | otherwise   = S.singleton i
     findVars (TypeApplication t0 t1) vs = S.union (findVars t0 vs) (findVars t1 vs)
     findVars t vs = S.empty
@@ -109,7 +110,7 @@ instance Monoid Subs where
 
 -- Utility functions {{{
 subType :: Subs -> Type -> Type
-subType (Subs subs) t@(TypeUnification i) = M.findWithDefault t i subs
+subType (Subs subs) t@(TypeVariable i) = M.findWithDefault t i subs
 subType subs (TypeApplication x y) = TypeApplication (subType subs x) (subType subs y)
 subType subs t = t
 
@@ -154,13 +155,13 @@ unify :: Type -> Type -> Solve Bool
 
 unify (TypeConcrete x) (TypeConcrete y) = pure (x == y)
 
-unify (TypeUnification x) (TypeUnification y)
+unify (TypeVariable x) (TypeVariable y)
   | x == y = pure True
-  | otherwise = applySubs (Subs $ M.singleton x (TypeUnification y)) $> True
+  | otherwise = applySubs (Subs $ M.singleton x (TypeVariable y)) $> True
 
-unify x y@(TypeUnification _) = unify y x
+unify x y@(TypeVariable _) = unify y x
 
-unify (TypeUnification x) y
+unify (TypeVariable x) y
   | y `contains` x = error "Cannot solve the infinite type"
   | otherwise = applySubs (Subs $ M.singleton x y) $> True
 
@@ -171,7 +172,7 @@ unify (TypeApplication x y) (TypeApplication x' y') =
 
 contains :: Type -> Integer -> Bool
 (TypeApplication a b) `contains` i = a `contains` i || b `contains` i
-(TypeUnification j) `contains` i = i == j
+(TypeVariable j) `contains` i = i == j
 _ `contains` _ = False
 
 -- }}}
