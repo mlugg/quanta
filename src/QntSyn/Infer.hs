@@ -6,6 +6,7 @@ import Control.Monad.Except
 import Control.Monad.State
 import Control.Monad.Writer
 import qualified Data.Map as M
+import qualified Data.Set as S
 import Data.Maybe
 import QntSyn
 
@@ -27,27 +28,48 @@ data Constraint = Equality Type Type
 -- It also contains an 'Except' monad in the stack for error reporting.
 type Infer a =
   RWST
-    (M.Map Identifier Type)  -- Typing environment
-    [Constraint]             -- Generated constraints
-    Integer                  -- Number of type vars
-    (Except TypeError)       -- The exception monad for error handling
+    (M.Map Identifier TyScheme)  -- Typing environment
+    [Constraint]                 -- Generated constraints
+    Integer                      -- Number of type vars
+    (Except TypeError)           -- The exception monad for error handling
     a
 
 -- |Generates a new unification variable.
 fresh :: Infer Type
 fresh = get >>= \c -> TypeUnification c <$ put (c+1)
 
+-- |Instantiates a TyScheme with fresh unification variables and return
+-- the resulting Type.
+instantiate :: TyScheme -> Infer Type
+instantiate (TyScheme vs t) = foldM f t vs
+  where f t' v' = fresh <&> \tv -> replace v' tv t'
+        replace i tn t'@(TypeUnification j)
+          | i == j = tn
+          | otherwise = t'
+        replace i tn (TypeApplication t1 t2) = TypeApplication (replace i tn t1) (replace i tn t2)
+        replace i tn t' = t'
+
 -- |Looks up the given identifier in the typing environment, throwing
 -- an appropriate 'TypeError' if it does not exist.
-envLookup :: String -> Infer Type
+envLookup :: String -> Infer TyScheme
 envLookup x = ask >>= maybe (throwError $ UnknownIdentError x) pure . M.lookup x
+
+-- |Given a type, attempts to generalise it to a TyScheme by identifying
+-- all type variables not in the given set.
+generalise t vs = TyScheme (findVars t vs) t
+  where
+    findVars (TypeUnification i) vs
+      | i `elem` vs = S.empty
+      | otherwise   = S.singleton i
+    findVars (TypeApplication t0 t1) vs = S.union (findVars t0 vs) (findVars t1 vs)
+    findVars t vs = S.empty
 
 -- |The main type inferrence function. Given an expression and initial
 -- environment, returns the type of the expression, as well as
 -- (indirectly, via the 'Infer' monad) a list of constraints to solve.
 infer :: Expr -> Infer Type
 
-infer (ExprIdent x) = envLookup x
+infer (ExprIdent x) = envLookup x >>= instantiate
 
 infer (ExprApplication f x) =
   infer f >>= \tf ->
@@ -61,26 +83,11 @@ infer (ExprNatLit x) = pure $ TypeConcrete "Nat"
 infer (ExprLambda x y) =
   fresh >>= \tx ->
   local
-    (M.insert x tx)
+    (M.insert x $ TyScheme S.empty tx)
     (typeOp "->" tx <$> infer y)
 
-infer (ExprLet xs y) =
-      let -- Generates a fresh type variable for the given binding x and
-          -- adds to to the environment
-          genVar env x = (\t -> M.insert (fst x) t env) <$> fresh
-
-          -- Generates an equality for the env type variable of a binding
-          -- and its inferred type
-          inferLet x =
-            envLookup (fst x) >>= \t0 ->
-            infer (snd x) >>= \t1 ->
-            tell [Equality t0 t1]
-      in
-        ask >>= \env ->
-        foldM genVar env xs >>= \env' ->
-        local
-          (const env')
-          (inferLet `mapM_` xs *> infer y)
+-- TODO
+infer (ExprLet xs y) = undefined
 
 -- TODO
 infer (ExprCase x ys) = undefined
@@ -163,8 +170,8 @@ unify (TypeApplication x y) (TypeApplication x' y') =
   True
 
 contains :: Type -> Integer -> Bool
-contains (TypeApplication a b) i = a `contains` i || b `contains` i
-contains (TypeUnification j) i = i == j
-contains _ _ = False
+(TypeApplication a b) `contains` i = a `contains` i || b `contains` i
+(TypeUnification j) `contains` i = i == j
+_ `contains` _ = False
 
 -- }}}

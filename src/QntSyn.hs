@@ -1,5 +1,7 @@
 module QntSyn where
 
+import qualified Data.Set as S
+
 -- AST types {{{
 
 type Identifier = String
@@ -24,6 +26,8 @@ data Type = TypeUnification Integer
           | TypeConcrete Identifier
           | TypeApplication Type Type
           deriving (Show)
+
+data TyScheme = TyScheme (S.Set Integer) Type
 
 -- }}}
 
