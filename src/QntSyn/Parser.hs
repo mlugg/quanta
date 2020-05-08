@@ -141,6 +141,7 @@ pattern = makeExprParser patternTerm
 
 patternTerm :: Parser Pattern
 patternTerm = parens pattern
-          <|> PIdent <$> identifier
+          <|> PNatLit <$> natural
+          <|> PIdent  <$> identifier
 
 -- }}}

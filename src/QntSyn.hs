@@ -8,6 +8,7 @@ type Identifier = String
 
 data Pattern = PIdent Identifier
              | PApplication Pattern Pattern
+             | PNatLit Integer
              deriving (Show)
 
 data TopLevel = TLAssign Identifier Expr
