@@ -28,6 +28,7 @@ data Type = TypeVariable Integer
           deriving (Show)
 
 data TyScheme = TyScheme (S.Set Integer) Type
+              deriving (Show)
 
 -- }}}
 
