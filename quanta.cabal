@@ -19,7 +19,7 @@ extra-source-files:  CHANGELOG.md
 
 executable quanta
   main-is:             Main.hs
-  other-modules:       QntSyn, QntSyn.Parser, QntSyn.Infer
+  other-modules:       QntSyn, QntSyn.Parser, QntSyn.Infer, QntSyn.Output
   -- other-extensions:
   build-depends:       base >=4.12 && <4.13, mtl, megaparsec, parser-combinators, containers
   hs-source-dirs:      src
