@@ -6,25 +6,25 @@ import qualified Data.Set as S
 
 type Identifier = String
 
-data Pattern = PatIdent Identifier
-             | PatApplication Pattern Pattern
+data Pattern = PIdent Identifier
+             | PApplication Pattern Pattern
              deriving (Show)
 
 data TopLevel = TLAssign Identifier Expr
               | TLTypeSig Identifier Type
               deriving (Show)
 
-data Expr = ExprIdent Identifier
-          | ExprApplication Expr Expr
-          | ExprNatLit Integer
-          | ExprLambda Identifier Expr
-          | ExprLet [(Identifier, Expr)] Expr
-          | ExprCase Expr [(Pattern, Expr)]
+data Expr = EIdent Identifier
+          | EApplication Expr Expr
+          | ENatLit Integer
+          | ELambda Identifier Expr
+          | ELet [(Identifier, Expr)] Expr
+          | ECase Expr [(Pattern, Expr)]
           deriving (Show)
 
-data Type = TypeVariable Integer
-          | TypeConcrete Identifier
-          | TypeApplication Type Type
+data Type = TVariable Integer
+          | TConcrete Identifier
+          | TApplication Type Type
           deriving (Show)
 
 data TyScheme = TyScheme (S.Set Integer) Type
@@ -32,4 +32,4 @@ data TyScheme = TyScheme (S.Set Integer) Type
 
 -- }}}
 
-typeOp op = TypeApplication . TypeApplication (TypeConcrete op)
+typeOp op = TApplication . TApplication (TConcrete op)

@@ -54,17 +54,17 @@ runInfer x env =
 
 -- |Generates a new unification variable.
 fresh :: Infer Type
-fresh = get >>= \c -> TypeVariable c <$ put (c+1)
+fresh = get >>= \c -> TVariable c <$ put (c+1)
 
 -- |Instantiates a TyScheme with fresh unification variables and return
 -- the resulting Type.
 instantiate :: TyScheme -> Infer Type
 instantiate (TyScheme vs t) = foldM f t vs
   where f t' v' = fresh <&> \tv -> replace v' tv t'
-        replace i tn t'@(TypeVariable j)
+        replace i tn t'@(TVariable j)
           | i == j = tn
           | otherwise = t'
-        replace i tn (TypeApplication t1 t2) = TypeApplication (replace i tn t1) (replace i tn t2)
+        replace i tn (TApplication t1 t2) = TApplication (replace i tn t1) (replace i tn t2)
         replace i tn t' = t'
 
 -- |Looks up the given identifier in the typing environment, throwing
@@ -77,10 +77,10 @@ envLookup x = ask >>= maybe (throwError $ UnknownIdentError x) pure . M.lookup x
 generalise :: Integer -> Type -> TyScheme
 generalise lim t = TyScheme (findVars t) t
   where
-    findVars (TypeVariable i)
+    findVars (TVariable i)
       | i < lim   = S.empty
       | otherwise = S.singleton i
-    findVars (TypeApplication t0 t1) = S.union (findVars t0) (findVars t1)
+    findVars (TApplication t0 t1) = S.union (findVars t0) (findVars t1)
     findVars t = S.empty
 
 -- |The main type inferrence function. Given an expression and initial
@@ -88,18 +88,18 @@ generalise lim t = TyScheme (findVars t) t
 -- (indirectly, via the 'Infer' monad) a list of constraints to solve.
 infer :: Expr -> Infer Type
 
-infer (ExprIdent x) = envLookup x >>= instantiate
+infer (EIdent x) = envLookup x >>= instantiate
 
-infer (ExprApplication f x) =
+infer (EApplication f x) =
   infer f >>= \tf ->
   infer x >>= \tx ->
   fresh >>= \tr ->
   tell [Equality tf (typeOp "->" tx tr)] *>
   return tr
 
-infer (ExprNatLit x) = pure $ TypeConcrete "Nat"
+infer (ENatLit x) = pure $ TConcrete "Nat"
 
-infer (ExprLambda x y) =
+infer (ELambda x y) =
   fresh >>= \tx ->
   local
     (M.insert x $ TyScheme S.empty tx)
@@ -107,7 +107,7 @@ infer (ExprLambda x y) =
 
 -- FIXME: For now, we basically treat this like a letrec - eventually we
 -- should split these into groups of mutually recursive bindings.
-infer (ExprLet xs inExpr) =
+infer (ELet xs inExpr) =
   inferBindingGroup xs >>= \bindsEnv ->
   local
     (M.union bindsEnv)
@@ -115,7 +115,7 @@ infer (ExprLet xs inExpr) =
 
 
 -- TODO
-infer (ExprCase x ys) = undefined
+infer (ECase x ys) = undefined
 
 inferBindingGroup :: [(Identifier, Expr)] -> Infer TypeEnv
 inferBindingGroup bs =
@@ -202,8 +202,8 @@ instance Monoid Subs where
 
 -- Utility functions {{{
 subType :: Subs -> Type -> Type
-subType (Subs subs) t@(TypeVariable i) = M.findWithDefault t i subs
-subType subs (TypeApplication x y) = TypeApplication (subType subs x) (subType subs y)
+subType (Subs subs) t@(TVariable i) = M.findWithDefault t i subs
+subType subs (TApplication x y) = TApplication (subType subs x) (subType subs y)
 subType subs t = t
 
 subConstraint :: Subs -> Constraint -> Constraint
@@ -245,19 +245,19 @@ solve' (Equality t0 t1) = unify t0 t1
 -- from the list.
 unify :: Type -> Type -> Solve Bool
 
-unify (TypeConcrete x) (TypeConcrete y) = pure (x == y)
+unify (TConcrete x) (TConcrete y) = pure (x == y)
 
-unify (TypeVariable x) (TypeVariable y)
+unify (TVariable x) (TVariable y)
   | x == y = pure True
-  | otherwise = applySubs (Subs $ M.singleton x (TypeVariable y)) $> True
+  | otherwise = applySubs (Subs $ M.singleton x (TVariable y)) $> True
 
-unify x y@(TypeVariable _) = unify y x
+unify x y@(TVariable _) = unify y x
 
-unify x@(TypeVariable x') y
+unify x@(TVariable x') y
   | y `contains` x' = throwError $ InfiniteTypeError x y
   | otherwise = applySubs (Subs $ M.singleton x' y) $> True
 
-unify (TypeApplication x y) (TypeApplication x' y') =
+unify (TApplication x y) (TApplication x' y') =
   addConstraint (Equality x x') *>
   addConstraint (Equality y y') $>
   True
@@ -265,8 +265,8 @@ unify (TypeApplication x y) (TypeApplication x' y') =
 unify x y = throwError $ CannotUnifyError x y
 
 contains :: Type -> Integer -> Bool
-(TypeApplication a b) `contains` i = a `contains` i || b `contains` i
-(TypeVariable j) `contains` i = i == j
+(TApplication a b) `contains` i = a `contains` i || b `contains` i
+(TVariable j) `contains` i = i == j
 _ `contains` _ = False
 
 -- }}}

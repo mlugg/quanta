@@ -90,29 +90,29 @@ typeSig = TLTypeSig <$> identifier <*> (reservedOp "::" *> typeExpr)
 
 expr :: Parser Expr
 expr = makeExprParser term
-  [ [ InfixL (pure ExprApplication)] ]
+  [ [ InfixL (pure EApplication)] ]
  
 term :: Parser Expr
 term = parens expr
-   <|> ExprNatLit <$> natural
-   <|> ExprIdent  <$> identifier
+   <|> ENatLit <$> natural
+   <|> EIdent  <$> identifier
    <|> lambda
    <|> caseExpr
    <|> letExpr
 
 lambda :: Parser Expr
-lambda = ExprLambda
+lambda = ELambda
      <$> (reservedOp "\\" *> identifier)
      <*> (reservedOp "->" *> expr)
 
 caseExpr :: Parser Expr
-caseExpr = ExprCase
+caseExpr = ECase
        <$> (reserved "case" *> expr)
        <*> (reserved "of"   *> braces (caseBranch `sepEndBy` semi))
        where caseBranch = (,) <$> pattern <*> (reservedOp "->" *> expr)
 
 letExpr :: Parser Expr
-letExpr = ExprLet
+letExpr = ELet
       <$> (reserved "let" *> braces (letVar `sepEndBy` semi))
       <*> (reserved "in"  *> expr)
       where letVar = (,) <$> identifier <*> (reservedOp "=" *> expr)
@@ -124,12 +124,12 @@ parseTypeOp op = typeOp op <$ reservedOp op
 
 typeExpr :: Parser Type
 typeExpr = makeExprParser typeTerm
-  [ [ InfixL (pure TypeApplication) ]
+  [ [ InfixL (pure TApplication) ]
   , [ InfixR (parseTypeOp "->") ] ]
 
 typeTerm :: Parser Type
 typeTerm = parens typeExpr
-       <|> TypeConcrete <$> identifier
+       <|> TConcrete <$> identifier
 
 -- }}}
 
@@ -137,10 +137,10 @@ typeTerm = parens typeExpr
 
 pattern :: Parser Pattern
 pattern = makeExprParser patternTerm
-  [ [ InfixL (pure PatApplication) ] ]
+  [ [ InfixL (pure PApplication) ] ]
 
 patternTerm :: Parser Pattern
 patternTerm = parens pattern
-          <|> PatIdent <$> identifier
+          <|> PIdent <$> identifier
 
 -- }}}
