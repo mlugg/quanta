@@ -15,6 +15,8 @@ pPrintType (TApplication (TApplication (TConcrete x) y) z)
 
 pPrintType (TApplication x y) = printf "(%s %s)" (pPrintType x) (pPrintType y)
 
-pPrintType (TConcrete x) = x
+pPrintType (TConcrete x)
+  | isOperator x = printf "(%s)" x
+  | otherwise = x
 
 pPrintType (TVariable i) = 'a' : show i
