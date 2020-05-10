@@ -31,6 +31,9 @@ data Type = TVariable Integer
 data TyScheme = TyScheme (S.Set Integer) Type
               deriving (Show)
 
+data ADTDef = ADTDef [Integer] Identifier [Type]
+            deriving (Show)
+
 -- }}}
 
 typeOp op = TApplication . TApplication (TConcrete op)
