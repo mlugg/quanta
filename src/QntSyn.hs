@@ -6,8 +6,8 @@ import qualified Data.Set as S
 
 type Identifier = String
 
-data Pattern = PIdent Identifier
-             | PApplication Pattern Pattern
+data Pattern = PConstr Identifier [Pattern]
+             | PIdent Identifier
              | PNatLit Integer
              deriving (Show)
 

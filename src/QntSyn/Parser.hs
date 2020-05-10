@@ -56,14 +56,24 @@ operator = try $ do x <- some opChar
                     then fail ("reserved operator " ++ show x ++ " cannot be used here")
                     else return x
 
-identifier :: Parser String
-identifier = try $ do x <- identStart
-                      xs <- many identChar
-                      sc
-                      let s = x:xs
-                      if s `elem` reservedNames
-                      then fail ("keyword " ++ show s ++ " cannot be identifier")
-                      else return s
+identifier :: Parser Char -> Parser String
+identifier start = try $
+  do x <- start
+     xs <- many identChar
+     sc
+     let s = x:xs
+     if s `elem` reservedNames
+     then fail ("keyword " ++ show s ++ " cannot be identifier")
+     else return s
+
+identType :: Parser String
+identType = identifier upperChar
+
+identVal :: Parser String
+identVal = identifier $ lowerChar <|> char '_'
+
+identAny :: Parser String
+identAny = identifier $ letterChar <|> char '_'
 
 natural :: Parser Integer
 natural = L.decimal <* sc
@@ -79,10 +89,10 @@ topLevelDef :: Parser TopLevel
 topLevelDef = try assignment <|> typeSig
 
 assignment :: Parser TopLevel
-assignment = TLAssign <$> identifier <*> (reservedOp "=" *> expr)
+assignment = TLAssign <$> identVal <*> (reservedOp "=" *> expr)
 
 typeSig :: Parser TopLevel
-typeSig = TLTypeSig <$> identifier <*> (reservedOp "::" *> typeExpr)
+typeSig = TLTypeSig <$> identVal <*> (reservedOp "::" *> typeExpr)
 
 -- }}}
 
@@ -95,14 +105,14 @@ expr = makeExprParser term
 term :: Parser Expr
 term = parens expr
    <|> ENatLit <$> natural
-   <|> EIdent  <$> identifier
+   <|> EIdent  <$> identVal
    <|> lambda
    <|> caseExpr
    <|> letExpr
 
 lambda :: Parser Expr
 lambda = ELambda
-     <$> (reservedOp "\\" *> identifier)
+     <$> (reservedOp "\\" *> identVal)
      <*> (reservedOp "->" *> expr)
 
 caseExpr :: Parser Expr
@@ -115,7 +125,7 @@ letExpr :: Parser Expr
 letExpr = ELet
       <$> (reserved "let" *> braces (letVar `sepEndBy` semi))
       <*> (reserved "in"  *> expr)
-      where letVar = (,) <$> identifier <*> (reservedOp "=" *> expr)
+      where letVar = (,) <$> identVal <*> (reservedOp "=" *> expr)
 -- }}}
 
 -- Type parsers {{{
@@ -129,19 +139,20 @@ typeExpr = makeExprParser typeTerm
 
 typeTerm :: Parser Type
 typeTerm = parens typeExpr
-       <|> TConcrete <$> identifier
+       <|> TConcrete <$> identType
 
 -- }}}
 
 -- Pattern parsers {{{
 
-pattern :: Parser Pattern
-pattern = makeExprParser patternTerm
-  [ [ InfixL (pure PApplication) ] ]
+patTerm :: Parser Pattern
+patTerm = parens pattern
+      <|> PNatLit <$> natural
+      <|> PIdent  <$> identVal
+      <|> PConstr <$> identType <*> pure []
 
-patternTerm :: Parser Pattern
-patternTerm = parens pattern
-          <|> PNatLit <$> natural
-          <|> PIdent  <$> identifier
+pattern :: Parser Pattern
+pattern = PConstr <$> identType <*> many patTerm
+      <|> patTerm
 
 -- }}}
