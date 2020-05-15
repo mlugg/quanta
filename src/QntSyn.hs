@@ -31,8 +31,12 @@ data Type = TVariable Integer
 data TyScheme = TyScheme (S.Set Integer) Type
               deriving (Show)
 
-data ADTDef = ADTDef [Integer] Identifier [Type]
+data ADTDef = ADTDef [Integer] [( Identifier, [Type] )]
             deriving (Show)
+
+-- ADTConstr typename typeargcount args
+-- In the args, tyvars are the type constructor args, from 0 up
+data ADTConstr = ADTConstr Identifier [Integer] [Type]
 
 -- }}}
 

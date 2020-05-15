@@ -14,8 +14,15 @@ import QntSyn
 
 either' e l r = either l r e
 
+firstM :: (Monad m) => (a -> m b) -> (a, c) -> m (b, c)
+firstM f (x, y) = f x >>= \x' -> pure (x', y)
+
 secondM :: (Monad m) => (a -> m b) -> (c, a) -> m (c, b)
 secondM f (x, y) = f y >>= \y' -> pure (x, y')
+
+unionAll :: (Ord k) => [M.Map k v] -> M.Map k v
+unionAll (x:xs) = x `M.union` unionAll xs
+unionAll [] = M.empty
 
 -- |The errors which can occur during type inference.
 data TypeError = UnknownIdentError Identifier
@@ -32,6 +39,11 @@ data Constraint = Equality Type Type
 
 type TypeEnv = M.Map Identifier TyScheme
 
+data InferEnv = InferEnv
+  { getTypeEnv :: TypeEnv
+  , getConstrs :: M.Map Identifier ADTConstr -- Maps from constructor names to info about them
+  }
+
 -- |The monad within which constraint generation runs. This is an RWS
 -- (reader/writer/state) monad, with a read-only typing environment; a
 -- writable list of constraints; and a integer state representing the
@@ -39,14 +51,14 @@ type TypeEnv = M.Map Identifier TyScheme
 -- It also contains an 'Except' monad in the stack for error reporting.
 type Infer a =
   RWST
-    TypeEnv             -- Typing environment
+    InferEnv            -- Typing environment
     [Constraint]        -- Generated constraints
     Integer             -- Number of type vars
     (Except TypeError)  -- The exception monad for error handling
     a
 
 -- Small wrapper for runnning an Infer monad given a typing environment.
-runInfer :: Infer a -> TypeEnv -> Either TypeError (a, [Constraint])
+runInfer :: Infer a -> InferEnv -> Either TypeError (a, [Constraint])
 runInfer x env =
   case runExcept $ runRWST x env 0 of
     Left e -> Left e
@@ -56,21 +68,26 @@ runInfer x env =
 fresh :: Infer Type
 fresh = get >>= \c -> TVariable c <$ put (c+1)
 
+localTE :: (TypeEnv -> TypeEnv) -> Infer a -> Infer a
+localTE f = local (\e -> e {getTypeEnv = f $ getTypeEnv e})
+
+replace :: Integer -> Type -> Type -> Type
+replace i tn t'@(TVariable j)
+  | i == j = tn
+  | otherwise = t'
+replace i tn (TApplication t1 t2) = TApplication (replace i tn t1) (replace i tn t2)
+replace i tn t' = t'
+
 -- |Instantiates a TyScheme with fresh unification variables and return
 -- the resulting Type.
 instantiate :: TyScheme -> Infer Type
 instantiate (TyScheme vs t) = foldM f t vs
   where f t' v' = fresh <&> \tv -> replace v' tv t'
-        replace i tn t'@(TVariable j)
-          | i == j = tn
-          | otherwise = t'
-        replace i tn (TApplication t1 t2) = TApplication (replace i tn t1) (replace i tn t2)
-        replace i tn t' = t'
 
 -- |Looks up the given identifier in the typing environment, throwing
 -- an appropriate 'TypeError' if it does not exist.
 envLookup :: String -> Infer TyScheme
-envLookup x = ask >>= maybe (throwError $ UnknownIdentError x) pure . M.lookup x
+envLookup x = ask >>= maybe (throwError $ UnknownIdentError x) pure . M.lookup x . getTypeEnv
 
 -- |Given a type, attempts to generalise it to a TyScheme by identifying
 -- all type variables greater than or equal to the given limit.
@@ -101,7 +118,7 @@ infer (ENatLit x) = pure $ TConcrete "Nat"
 
 infer (ELambda x y) =
   fresh >>= \tx ->
-  local
+  localTE
     (M.insert x $ TyScheme S.empty tx)
     (typeOp "->" tx <$> infer y)
 
@@ -109,13 +126,56 @@ infer (ELambda x y) =
 -- should split these into groups of mutually recursive bindings.
 infer (ELet xs inExpr) =
   inferBindingGroup xs >>= \bindsEnv ->
-  local
+  localTE
     (M.union bindsEnv)
     (infer inExpr)
 
 
 -- TODO
-infer (ECase x ys) = undefined
+infer (ECase x ys) =
+  infer x >>= \tx ->
+  firstM (inferPatTypes tx) `mapM` ys >>=
+  mapM (\(env, expr) -> localTE (M.union env) (infer expr)) >>= \zs ->
+  fresh >>= \t ->
+  tell (Equality t <$> zs) $>
+  t
+
+-- Pattern matching {{{
+
+-- TODO: Clean up this function, it's messy and slow
+instantiateConstr :: ADTConstr
+                  -> Infer (Type, [Type])
+
+instantiateConstr (ADTConstr tname targs cargs) =
+  const fresh `mapM` targs >>= \targs' ->
+  let replaceAll t = foldl' (\t' (old, new) -> replace old new t') t (zip targs targs')
+      fullType = f $ reverse $ replaceAll . TVariable <$> targs
+      f (x:xs) = TApplication (f xs) x
+      f [] = TConcrete tname
+  in pure (fullType, replaceAll <$> cargs)
+
+inferPatTypes :: Type           -- The type of the expr being matched against
+              -> Pattern        -- The pattern being matched against the expression
+              -> Infer TypeEnv  -- The resulting environment within this match
+
+inferPatTypes t (PIdent x) = pure $ M.singleton x (TyScheme S.empty t)
+
+inferPatTypes t (PNatLit x) =
+  tell [Equality t (TConcrete "Nat")] $>
+  M.empty
+
+inferPatTypes t (PConstr name args) =
+  M.lookup name . getConstrs <$> ask >>=
+  maybe
+    (throwError $ UnknownIdentError name)
+    pure >>= instantiateConstr >>= \(tname, cargs) ->
+    if length cargs /= length args
+    then throwError $ error "TODO: handle invalid number of constr params"
+    else
+      tell [Equality t $ tname] *>
+      zipWithM inferPatTypes cargs args <&> unionAll -- TODO FIXME: Check for duplicated names!!!!
+
+-- }}}
 
 inferBindingGroup :: [(Identifier, Expr)] -> Infer TypeEnv
 inferBindingGroup bs =
@@ -145,7 +205,9 @@ inferBindingGroup bs =
 
     -- envTmp is the temporary environment, with simple types
     -- instantiated for all bindings in the group.
-    ask >>= (\e -> foldM extendEnvTmp e names) >>= \envTmp ->
+    ask >>= (
+        \e  -> foldM extendEnvTmp (getTypeEnv e) names >>=
+        \te -> pure $ e {getTypeEnv = te}) >>= \envTmp ->
 
     get >>= \curTyVar ->
 
@@ -160,7 +222,7 @@ inferBindingGroup bs =
 
     -- Generate additional equalities between the auto-generated types
     -- and the inferred types
-    let cs' = cs ++ genEqualities envTmp xs in
+    let cs' = cs ++ genEqualities (getTypeEnv envTmp) xs in
 
     -- Attempt to solve the constraints
     either'
