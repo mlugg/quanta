@@ -24,6 +24,10 @@ unionAll :: (Ord k) => [M.Map k v] -> M.Map k v
 unionAll (x:xs) = x `M.union` unionAll xs
 unionAll [] = M.empty
 
+mkMap :: (Ord k) => [(k, v)] -> M.Map k v
+mkMap ((x, y):xs) = M.insert x y $ mkMap xs
+mkMap [] = M.empty
+
 -- |The errors which can occur during type inference.
 data TypeError = UnknownIdentError Identifier
                | InfiniteTypeError Type Type
@@ -71,18 +75,18 @@ fresh = get >>= \c -> TVariable c <$ put (c+1)
 localTE :: (TypeEnv -> TypeEnv) -> Infer a -> Infer a
 localTE f = local (\e -> e {getTypeEnv = f $ getTypeEnv e})
 
-replace :: Integer -> Type -> Type -> Type
-replace i tn t'@(TVariable j)
-  | i == j = tn
-  | otherwise = t'
-replace i tn (TApplication t1 t2) = TApplication (replace i tn t1) (replace i tn t2)
-replace i tn t' = t'
+replace :: (M.Map Integer Type) -> Type -> Type
+replace subs t'@(TVariable j) = fromMaybe t' (M.lookup j subs)
+replace subs (TApplication t1 t2) = TApplication (replace subs t1) (replace subs t2)
+replace subs t' = t'
 
 -- |Instantiates a TyScheme with fresh unification variables and return
 -- the resulting Type.
 instantiate :: TyScheme -> Infer Type
-instantiate (TyScheme vs t) = foldM f t vs
-  where f t' v' = fresh <&> \tv -> replace v' tv t'
+instantiate (TyScheme vs t) =
+  let vsl = S.toList vs in
+  const fresh `mapM` vsl <&> \vs' ->
+  replace (mkMap $ zip vsl vs') t
 
 -- |Looks up the given identifier in the typing environment, throwing
 -- an appropriate 'TypeError' if it does not exist.
@@ -148,8 +152,8 @@ instantiateConstr :: ADTConstr
 
 instantiateConstr (ADTConstr tname targs cargs) =
   const fresh `mapM` targs >>= \targs' ->
-  let replaceAll t = foldl' (\t' (old, new) -> replace old new t') t (zip targs targs')
-      fullType = f $ reverse $ replaceAll . TVariable <$> targs
+  let replaceAll t = replace (mkMap $ zip targs targs') t
+      fullType = f $ reverse targs'
       f (x:xs) = TApplication (f xs) x
       f [] = TConcrete tname
   in pure (fullType, replaceAll <$> cargs)
