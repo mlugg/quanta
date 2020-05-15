@@ -152,11 +152,11 @@ instantiateConstr :: ADTConstr
 
 instantiateConstr (ADTConstr tname targs cargs) =
   const fresh `mapM` targs >>= \targs' ->
-  let replaceAll t = replace (mkMap $ zip targs targs') t
+  let replacements = mkMap $ zip targs targs'
       fullType = f $ reverse targs'
       f (x:xs) = TApplication (f xs) x
       f [] = TConcrete tname
-  in pure (fullType, replaceAll <$> cargs)
+  in pure (fullType, replace replacements <$> cargs)
 
 inferPatTypes :: Type           -- The type of the expr being matched against
               -> Pattern        -- The pattern being matched against the expression
