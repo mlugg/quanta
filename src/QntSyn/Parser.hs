@@ -105,7 +105,7 @@ expr = makeExprParser term
 term :: Parser Expr
 term = parens expr
    <|> ENatLit <$> natural
-   <|> EIdent  <$> identVal
+   <|> EIdent  <$> identAny
    <|> lambda
    <|> caseExpr
    <|> letExpr
