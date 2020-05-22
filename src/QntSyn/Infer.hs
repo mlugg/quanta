@@ -11,6 +11,7 @@ import qualified Data.Map as M
 import qualified Data.Set as S
 import Data.Maybe
 import QntSyn
+import QntSyn.DepAnal
 
 either' e l r = either l r e
 
@@ -129,7 +130,7 @@ infer (ELambda x y) =
 -- FIXME: For now, we basically treat this like a letrec - eventually we
 -- should split these into groups of mutually recursive bindings.
 infer (ELet xs inExpr) =
-  inferBindingGroup xs >>= \bindsEnv ->
+  foldM (\e g -> M.union e <$> localTE (M.union e) (inferBindingGroup g)) M.empty (makeBindingGroups xs) >>= \bindsEnv ->
   localTE
     (M.union bindsEnv)
     (infer inExpr)
@@ -334,5 +335,40 @@ contains :: Type -> Integer -> Bool
 (TApplication a b) `contains` i = a `contains` i || b `contains` i
 (TVariable j) `contains` i = i == j
 _ `contains` _ = False
+
+-- }}}
+
+-- Dependency analysis {{{
+
+findRefs :: Expr -> S.Set Identifier
+
+findRefs (EIdent x) = S.singleton x
+
+findRefs (EApplication e0 e1) = findRefs e0 `S.union` findRefs e1
+
+findRefs (ENatLit _) = S.empty
+
+findRefs (ELambda x e) = S.delete x $ findRefs e
+
+findRefs (ELet xs e) =
+  let ns = S.fromList $ fst <$> xs
+      rs = (S.unions $ findRefs . snd <$> xs) `S.union` findRefs e
+  in rs S.\\ ns
+
+findRefs (ECase e bs) =
+  let pFindRefs (PConstr x ys) = S.unions $ pFindRefs <$> ys
+      pFindRefs (PIdent x) = S.singleton x
+      pFindRefs (PNatLit _) = S.empty
+      f (pat, expr) = findRefs expr S.\\ pFindRefs pat
+  in (S.unions $ f <$> bs) `S.union` findRefs e
+
+makeBindingGroups :: [(Identifier, Expr)] -> [[(Identifier, Expr)]]
+makeBindingGroups xs =
+  let exprMap = M.fromList xs
+      names = S.fromList $ fst <$> xs
+      refs = M.fromList (second ((S.intersection names) . findRefs) <$> xs)
+      groups = mkDepGroups refs
+  in groups <&> \idents ->
+       (\ident -> (ident, exprMap M.! ident)) <$> S.toList idents
 
 -- }}}
