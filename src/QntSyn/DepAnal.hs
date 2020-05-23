@@ -43,8 +43,8 @@ data GraphRefs = GraphRefs
 
 mkDepGraph :: M.Map Identifier (S.Set Identifier) -> Graph
 mkDepGraph xs =
-  let f name inRefs =
-        let outRefs = M.keysSet $ M.filter (name `S.member`) xs
+  let f name outRefs =
+        let inRefs = M.keysSet $ M.filter (name `S.member`) xs
         in GraphRefs inRefs outRefs
   in f `M.mapWithKey` xs
 
@@ -54,7 +54,7 @@ mkDepGraph xs =
 visitAll :: Graph
          -> [Identifier]
 
-visitAll g = concat $ evalState (visit g `mapM` M.keys g) S.empty
+visitAll g = concat $ reverse $ evalState (visit g `mapM` M.keys g) S.empty
 
 visit :: Graph
       -> Identifier
@@ -68,7 +68,7 @@ visit g u =
     let node = g M.! u
     in modify (S.insert u) *>
        visit g `mapM` S.toList (getOutRefs node) <&>
-         (u:) . concat
+         (u:) . concat . reverse
 
 assignAll :: Graph
           -> [Identifier]
