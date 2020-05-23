@@ -2,6 +2,7 @@ module QntSyn.Output where
 
 import QntSyn
 import Text.Printf
+import qualified Data.Set as S
 
 isOperator :: String -> Bool
 isOperator "" = False
@@ -20,3 +21,7 @@ pPrintType (TConcrete x)
   | otherwise = x
 
 pPrintType (TVariable i) = 'a' : show i
+
+pPrintTyScheme (TyScheme vars ty)
+  | null vars = pPrintType ty
+  | otherwise = "∀" <> S.foldr (\x s -> printf " a%d%s" x s) "" vars <> ". " <> pPrintType ty
